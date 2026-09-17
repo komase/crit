@@ -583,16 +583,20 @@ func (s *Session) finishRoundComplete(edits int) {
 
 // handleRoundCompleteGit handles round completion in git mode.
 // Re-runs ChangedFiles, re-computes diffs, refreshes file list.
+// Range focus is pinned to base..head, so its working-tree refresh is skipped.
 // Must only be called from the single watcher goroutine (watchGit).
 func (s *Session) handleRoundCompleteGit() {
 	s.mu.RLock()
 	edits := s.lastRoundEdits
+	rangeFocus := s.Focus.Kind == FocusRange
 	s.mu.RUnlock()
 
 	s.loadResolvedComments()
 
-	// Refresh file list (agent may have created/deleted files)
-	s.RefreshFileList()
+	if !rangeFocus {
+		// Refresh file list (agent may have created/deleted files)
+		s.RefreshFileList()
+	}
 
 	// Snapshot PreviousContent before re-reading for all files with comments.
 	// LCS + anchor verification is used for all file types.
@@ -605,7 +609,9 @@ func (s *Session) handleRoundCompleteGit() {
 			f.PreviousContent = f.Content
 		}
 	}
-	s.rereadFileContents(false)
+	if !rangeFocus {
+		s.rereadFileContents(false)
+	}
 	s.mu.Unlock()
 
 	// Run LCS-based carry-forward with anchor verification for all file types.
@@ -636,8 +642,10 @@ func (s *Session) handleRoundCompleteGit() {
 	// review.json (e.g. after an interrupted agent reconnect).
 	s.persistAfterRoundComplete()
 
-	// Refresh diffs for all files
-	s.RefreshDiffs()
+	if !rangeFocus {
+		// Refresh diffs for all files
+		s.RefreshDiffs()
+	}
 
 	s.finishRoundComplete(edits)
 }
