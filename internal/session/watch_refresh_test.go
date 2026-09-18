@@ -408,3 +408,50 @@ func TestHandleRoundCompleteGit_RangeFocusKeepsPinnedRangeInRealGit(t *testing.T
 		t.Errorf("round 2 files = %+v, want [a.txt b.txt] (untracked workspace must not leak)", s.Files)
 	}
 }
+
+// TestRefreshHelpers_RangeFocusNoOp covers the agent-reply path
+// (RefreshFileContent + RefreshFileList + RefreshDiffs) which does not go
+// through handleRoundCompleteGit. Under FocusRange those helpers must not
+// fold working-tree state into the pinned review.
+func TestRefreshHelpers_RangeFocusNoOp(t *testing.T) {
+	v := &fakeWatchVCS{
+		currentBranch: "feature",
+		defaultBranch: "main",
+		branchChanges: []vcs.FileChange{
+			{Path: "workspace-only.md", Status: "untracked"},
+		},
+		diffs: map[string][]vcs.DiffHunk{
+			"workspace-only.md": {{OldStart: 1, NewStart: 1}},
+		},
+	}
+	s := newWatchSession(t, v)
+	s.Focus = Focus{Kind: FocusRange, BaseSHA: "base", HeadSHA: "head", DiffScope: DiffScopeLayer}
+	prFile := &FileEntry{
+		Path:     "pr-file.md",
+		AbsPath:  filepath.Join(s.RepoRoot, "pr-file.md"),
+		Status:   "modified",
+		Content:  "pr content\n",
+		FileHash: fileHash([]byte("pr content\n")),
+	}
+	s.Files = []*FileEntry{prFile}
+	if err := os.WriteFile(prFile.AbsPath, []byte("working tree content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.RefreshFileContent()
+	s.RefreshFileList()
+	s.RefreshDiffs()
+
+	if got := atomic.LoadInt32(&v.changedFlsCalls); got != 0 {
+		t.Errorf("ChangedFilesFromBaseInDir called %d times, want 0", got)
+	}
+	if got := atomic.LoadInt32(&v.diffCalls); got != 0 {
+		t.Errorf("FileDiffUnified called %d times, want 0", got)
+	}
+	if len(s.Files) != 1 || s.Files[0] != prFile {
+		t.Fatalf("file list changed: %+v", s.Files)
+	}
+	if got := s.Files[0].Content; got != "pr content\n" {
+		t.Errorf("content = %q, want %q", got, "pr content\n")
+	}
+}
